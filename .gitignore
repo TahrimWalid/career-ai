@@ -1,0 +1,23 @@
+# Python environment & caching
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Databases and environment variables
+*.db
+*.sqlite
+*.env
+
+# Logs
+*.log
+pipeline.log
+
+# System & IDE files
+.DS_Store
+.idea/
+.vscode/
+
+# Data & Output
+data/
