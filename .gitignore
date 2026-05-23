@@ -19,5 +19,12 @@ pipeline.log
 .idea/
 .vscode/
 
+# Documentation (all markdown except README)
+PORTFOLIO_SUMMARY.md
+QUICK_START.md
+SESSION_COMPLETION.md
+INTERVIEW_STRATEGY.md
+FIXES_APPLIED.md
+
 # Data & Output
 data/

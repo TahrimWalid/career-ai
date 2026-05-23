@@ -28,12 +28,12 @@ def top_skills(limit: int = 10) -> None:
         
         query = f"""
         SELECT 
-            json_extract(value, '$') as skill,
+            value as skill,
             COUNT(*) as demand_count,
             ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM structured_insights WHERE skills IS NOT NULL), 2) as percentage
         FROM structured_insights, json_each(structured_insights.skills)
         WHERE skills IS NOT NULL AND skills != '[]'
-        GROUP BY json_extract(value, '$')
+        GROUP BY value
         ORDER BY demand_count DESC
         LIMIT ?
         """
@@ -74,12 +74,12 @@ def top_frameworks_tools(limit: int = 10) -> None:
         
         query = f"""
         SELECT 
-            json_extract(value, '$') as framework_tool,
+            value as framework_tool,
             COUNT(*) as demand_count,
             ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM structured_insights WHERE frameworks_tools IS NOT NULL), 2) as percentage
         FROM structured_insights, json_each(structured_insights.frameworks_tools)
         WHERE frameworks_tools IS NOT NULL AND frameworks_tools != '[]'
-        GROUP BY json_extract(value, '$')
+        GROUP BY value
         ORDER BY demand_count DESC
         LIMIT ?
         """
@@ -107,13 +107,20 @@ def top_frameworks_tools(limit: int = 10) -> None:
 
 def seniority_distribution() -> None:
     """
-    Display market demand across structural seniority tiers.
+    Display market demand across structural seniority tiers (extracted records only).
     """
     conn = get_connection()
     cursor = conn.cursor()
     
     try:
+        # Get total counts
+        cursor.execute("SELECT COUNT(*) FROM raw_postings")
+        total_jobs = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM structured_insights")
+        extracted_jobs = cursor.fetchone()[0]
+        
         print_header("MARKET DEMAND BY SENIORITY TIER")
+        print(f"Note: Showing {extracted_jobs} extracted jobs out of {total_jobs} total fetched\n")
         
         query = """
         SELECT 
@@ -155,7 +162,7 @@ def seniority_distribution() -> None:
 
 def geographic_distribution() -> None:
     """
-    Display market demand across geographic regions based on location field.
+    Display job postings by geographic location (city/region).
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -163,35 +170,41 @@ def geographic_distribution() -> None:
     try:
         print_header("GEOGRAPHIC DISTRIBUTION OF JOB POSTINGS")
         
+        # Get total extracted jobs
+        cursor.execute("SELECT COUNT(*) FROM raw_postings WHERE extraction_status = 'done'")
+        total_extracted = cursor.fetchone()[0]
+        
         query = """
         SELECT 
-            COALESCE(raw_postings.location, 'Unknown') as location,
+            location,
             COUNT(*) as job_count,
-            COUNT(CASE WHEN structured_insights.id IS NOT NULL THEN 1 END) as extracted_count,
-            ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM raw_postings), 2) as percentage
+            ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM raw_postings WHERE extraction_status = 'done' AND location IS NOT NULL AND location NOT IN ('', 'Pending')), 2) as percentage
         FROM raw_postings
-        LEFT JOIN structured_insights ON raw_postings.id = structured_insights.id
-        GROUP BY raw_postings.location
+        WHERE extraction_status = 'done' AND location IS NOT NULL AND location NOT IN ('', 'Pending')
+        GROUP BY location
         ORDER BY job_count DESC
+        LIMIT 15
         """
         
         cursor.execute(query)
         rows = cursor.fetchall()
         
         if not rows:
-            print("No geographic data available.\n")
+            print("No location data available.\n")
             return
         
-        print(f"{'Location':<30} {'Total':<10} {'Extracted':<12} {'Percentage':<12}")
+        valid_locations = sum(count for _, count, _ in rows)
+        print(f"Found jobs in {len(rows)} locations (out of {total_extracted} extracted)\n")
+        print(f"{'Location':<30} {'Job Count':<15} {'Percentage':<12}")
         print("-" * 70)
         
-        for location, total, extracted, percentage in rows:
-            print(f"{location:<30} {total:<10} {extracted:<12} {percentage:.2f}%")
+        for location, count, percentage in rows:
+            print(f"{location:<30} {count:<15} {percentage:.2f}%")
         
         print()
     
     except Exception as e:
-        logger.error(f"Error fetching geographic distribution: {e}")
+        logger.error(f"Error in geographic distribution: {e}")
     finally:
         conn.close()
 
@@ -255,11 +268,11 @@ def skill_seniority_correlation() -> None:
             
             query = """
             SELECT 
-                json_extract(value, '$') as skill,
+                value as skill,
                 COUNT(*) as count
             FROM structured_insights, json_each(structured_insights.skills)
             WHERE seniority = ? AND skills IS NOT NULL AND skills != '[]'
-            GROUP BY json_extract(value, '$')
+            GROUP BY value
             ORDER BY count DESC
             LIMIT 5
             """

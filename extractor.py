@@ -15,6 +15,7 @@ except ImportError:
 
 from database import (
     init_database,
+    get_connection,
     get_pending_extractions,
     insert_structured_insight,
     insert_failed_extraction
@@ -93,26 +94,23 @@ def extract_with_ollama(job_description: str) -> Optional[str]:
     try:
         client = Client(host="http://localhost:11434")
         
-        system_prompt = """Analyze this Finnish/English job posting. Categorize the overarching job profile into a clean standardized title. Explicitly distinguish between 'skills' and 'frameworks_tools':
-
-skills: Only languages, core technologies, protocols, and major cloud platforms (e.g., Python, AWS, Java, Azure, SQL, CCNA).
-
-frameworks_tools: Only libraries, frameworks, runtime environments, and infrastructure tooling (e.g., Terraform, Docker, React, Kubernetes, Django, Node.js).
-
-Output strictly valid JSON conforming to the requested schema. Do not append any conversational introductory or concluding text."""
+        # Truncate job description to first 2000 chars for efficiency
+        truncated_desc = job_description[:2000]
         
-        user_message = f"""Extract insights from this job posting:
+        system_prompt = """Extract skills and tools from job postings. Return ONLY valid JSON.
+Skills: Languages, protocols, platforms (Python, Java, SQL, AWS).
+Tools: Frameworks, libraries, runtimes (Docker, React, Kubernetes, Node.js).
 
-{job_description}
+EXAMPLE:
+Input: "We need a Python developer with AWS and Docker experience"
+Output: {"standardized_role": "Software Developer", "seniority": "Mid", "skills": ["Python", "AWS"], "frameworks_tools": ["Docker"], "is_english": true}"""
+        
+        user_message = f"""Extract from this job posting:
 
-Return ONLY valid JSON with these fields:
-{{
-  "standardized_role": "string",
-  "seniority": "Junior|Mid|Senior|Lead|Unknown",
-  "skills": ["list", "of", "skills"],
-  "frameworks_tools": ["list", "of", "tools"],
-  "is_english": boolean
-}}"""
+{truncated_desc}
+
+Return ONLY this JSON (list all mentioned skills and tools):
+{{"standardized_role": "string", "seniority": "Junior|Mid|Senior|Lead|Unknown", "skills": ["skill1", "skill2"], "frameworks_tools": ["tool1", "tool2"], "is_english": true}}"""
         
         response = client.generate(
             model="qwen2.5:3b",
@@ -166,15 +164,25 @@ def parse_llm_output(raw_output: str) -> Optional[StructuredInsight]:
         return None
 
 
-def extraction_pipeline(batch_size: int = 50) -> None:
+def extraction_pipeline(batch_size: int = None) -> None:
     """
-    Main extraction pipeline: process pending postings with LLM.
+    Main extraction pipeline: process ALL pending postings with LLM.
     
     Args:
-        batch_size: Number of pending records to process per run
+        batch_size: Number of pending records to process per run (None = process all)
     """
     logger.info("Starting extraction pipeline")
     init_database()
+    
+    # If batch_size not specified, process all pending records
+    if batch_size is None:
+        # Get count of pending records
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM raw_postings WHERE extraction_status = 'pending'")
+        batch_size = cursor.fetchone()[0]
+        conn.close()
+        logger.info(f"Processing ALL pending records: {batch_size} total")
     
     pending_records = get_pending_extractions(limit=batch_size)
     logger.info(f"Found {len(pending_records)} pending extractions")

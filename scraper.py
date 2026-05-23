@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 from typing import Optional
 from database import init_database, url_exists, insert_raw_posting, get_connection, update_extraction_status
 from logger import logger
+import re
 
 # Duunitori IT sector landing page
 BASE_URL = "https://duunitori.fi/tyopaikat/ala/tieto-tietoliikennetekniikka"
@@ -23,6 +24,117 @@ MIN_DELAY = 2
 MAX_DELAY = 5
 MAX_RETRIES = 3
 BACKOFF_FACTOR = 2
+
+# Rate limit tracking
+rate_limit_delay = MIN_DELAY  # Adaptive delay
+last_request_time = 0
+
+
+def adaptive_delay():
+    """
+    Apply adaptive rate limiting based on consecutive requests.
+    Increases delay if rate limited, decreases if requests are successful.
+    """
+    global rate_limit_delay, last_request_time
+    
+    # Ensure minimum time between requests
+    elapsed = time.time() - last_request_time
+    if elapsed < rate_limit_delay:
+        time.sleep(rate_limit_delay - elapsed)
+    
+    last_request_time = time.time()
+
+
+def on_rate_limit():
+    """Call when rate limited to increase delay"""
+    global rate_limit_delay
+    rate_limit_delay = min(rate_limit_delay * BACKOFF_FACTOR, 30)  # Cap at 30s
+    logger.warning(f"Rate limit detected. Increasing delay to {rate_limit_delay:.1f}s")
+
+
+def on_success():
+    """Call on successful request to gradually decrease delay"""
+    global rate_limit_delay
+    rate_limit_delay = max(rate_limit_delay * 0.95, MIN_DELAY)  # Slowly decrease
+
+
+def extract_job_metadata(soup: BeautifulSoup) -> tuple:
+    """
+    Extract company name, location(s), company_id from job posting HTML.
+    
+    Returns:
+        Tuple of (company_name, location, company_id, company_registry_id)
+    """
+    try:
+        company_name = "Unknown"
+        location = "Unknown"
+        company_id = ""
+        company_registry_id = ""
+        
+        # Find company name from "Toiminimi" section
+        for header in soup.find_all(['h4', 'h3', 'h2', 'label']):
+            if 'toiminimi' in header.get_text().lower():
+                # Next element should contain company name
+                company_elem = header.find_next(['div', 'p', 'span'])
+                if company_elem:
+                    company_name = company_elem.get_text(strip=True)
+                    break
+        
+        # Find location from "Työpaikan sijainti" section
+        for header in soup.find_all(['h4', 'h3', 'h2']):
+            if 'sijainti' in header.get_text().lower():
+                # Next element should contain location
+                loc_elem = header.find_next(['div', 'p', 'span'])
+                if loc_elem:
+                    location = loc_elem.get_text(strip=True)
+                    break
+        
+        # If location extraction failed, try common Finnish cities
+        if location == "Unknown":
+            finnish_cities = ['Espoo', 'Helsinki', 'Tampere', 'Turku', 'Oulu', 'Jyväskylä', 'Kuopio', 
+                            'Lappeenranta', 'Joensuu', 'Pori', 'Lahti', 'Vaasa', 'Seinäjoki']
+            for city in finnish_cities:
+                if city in soup.get_text():
+                    location = city
+                    break
+        
+        # Extract company registry ID (Y-tunnus) - usually shown on the page
+        for text_node in soup.find_all(string=re.compile(r'Y-tunnus')):
+            parent = text_node.parent
+            next_sibling = parent.find_next_sibling()
+            if next_sibling:
+                y_tunnus = next_sibling.get_text(strip=True)
+                if re.match(r'\d+-\d+', y_tunnus):
+                    company_registry_id = y_tunnus
+                    break
+        
+        return (company_name, location, company_id, company_registry_id)
+    
+    except Exception as e:
+        logger.debug(f"Error extracting job metadata: {e}")
+        return ("Unknown", "Unknown", "", "")
+
+
+def validate_title(title: str) -> bool:
+    """
+    Validate job title - exclude placeholders and error pages.
+    
+    Returns:
+        True if title looks valid, False if it's a placeholder or error
+    """
+    if not title or len(title.strip()) < 3:
+        return False
+    
+    invalid_titles = [
+        'pending', 'sign in', 'login', '404', 'error', 'not found',
+        'unknown', 'none', 'n/a', 'unavailable', 'page not found'
+    ]
+    
+    title_lower = title.lower()
+    if any(invalid in title_lower for invalid in invalid_titles):
+        return False
+    
+    return True
 
 
 def step1_index_scraping(max_pages: int = 50) -> int:
@@ -50,9 +162,8 @@ def step1_index_scraping(max_pages: int = 50) -> int:
         
         for attempt in range(MAX_RETRIES):
             try:
-                # Randomized delay
-                delay = random.uniform(MIN_DELAY, MAX_DELAY)
-                time.sleep(delay)
+                # Adaptive rate limiting
+                adaptive_delay()
                 
                 response = requests.get(
                     BASE_URL,
@@ -62,6 +173,7 @@ def step1_index_scraping(max_pages: int = 50) -> int:
                 )
                 
                 if response.status_code == 200:
+                    on_success()  # Success - decrease delay
                     logger.debug(f"HTTP 200 OK for page {page}")
                     soup = BeautifulSoup(response.content, "html.parser")
                     
@@ -113,6 +225,7 @@ def step1_index_scraping(max_pages: int = 50) -> int:
                     break  # Move to next page
                 
                 elif response.status_code in [429, 503]:
+                    on_rate_limit()  # Increase adaptive delay
                     wait_time = BACKOFF_FACTOR ** attempt
                     logger.warning(f"Rate limited (HTTP {response.status_code}). Retrying in {wait_time}s...")
                     time.sleep(wait_time)
@@ -177,9 +290,8 @@ def step2_detail_hydration() -> int:
             
             for attempt in range(MAX_RETRIES):
                 try:
-                    # Randomized delay
-                    delay = random.uniform(MIN_DELAY, MAX_DELAY)
-                    time.sleep(delay)
+                    # Adaptive rate limiting
+                    adaptive_delay()
                     
                     response = requests.get(
                         job_url,
@@ -188,12 +300,21 @@ def step2_detail_hydration() -> int:
                     )
                     
                     if response.status_code == 200:
+                        on_success()  # Success - decrease delay
                         logger.debug(f"HTTP 200 OK for {job_url}")
                         soup = BeautifulSoup(response.content, "html.parser")
                         
                         # Extract metadata
                         title_elem = soup.find("h1")
                         title = title_elem.get_text(strip=True) if title_elem else "Unknown"
+                        
+                        # Validate title (skip if it's a placeholder or error page)
+                        if not validate_title(title):
+                            logger.warning(f"Invalid title for {job_id}: {title}. Skipping.")
+                            break
+                        
+                        # Extract company, location, and other metadata
+                        company, location, company_id, company_registry_id = extract_job_metadata(soup)
                         
                         # Extract full description text
                         description_container = soup.find("main") or soup.find("article") or soup.find("div", class_=lambda x: x and "content" in str(x).lower())
@@ -214,12 +335,13 @@ def step2_detail_hydration() -> int:
                         try:
                             cursor.execute("""
                                 UPDATE raw_postings
-                                SET title = ?, raw_html = ?
+                                SET title = ?, company = ?, location = ?, raw_html = ?
                                 WHERE id = ?
-                            """, (title, raw_html, job_id))
+                            """, (title, company, location, raw_html, job_id))
                             
                             conn.commit()
-                            logger.info(f"Successfully hydrated: {job_id}")
+                            logger.info(f"Successfully hydrated: {job_id} | Company: {company} | Location: {location}")
+                            # Keep status as 'pending' - will be marked 'done' by extraction pipeline
                             successfully_hydrated += 1
                         
                         except Exception as e:
@@ -231,6 +353,7 @@ def step2_detail_hydration() -> int:
                         break  # Move to next record
                     
                     elif response.status_code in [429, 503]:
+                        on_rate_limit()  # Increase adaptive delay
                         wait_time = BACKOFF_FACTOR ** attempt
                         logger.warning(f"Rate limited (HTTP {response.status_code}). Retrying in {wait_time}s...")
                         time.sleep(wait_time)
