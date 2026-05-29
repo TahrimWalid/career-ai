@@ -10,13 +10,14 @@ Usage:
 """
 import argparse
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 
-from database import init_database
+from database import init_database, get_connection
 from logger import logger
 
 # Import pipeline functions
-from scraper import scrape_pipeline
+from scraper import scrape_pipeline, generate_hydration_summary
 from extractor import extraction_pipeline
 from analytics import analytics_pipeline
 
@@ -34,49 +35,100 @@ def validate_and_initialize() -> None:
         sys.exit(1)
 
 
-def run_scraper() -> None:
-    """Execute the web scraper phase."""
+def format_duration(seconds: float) -> str:
+    """Format duration in seconds to human-readable format."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        minutes = seconds / 60
+        return f"{minutes:.1f}m"
+    else:
+        hours = seconds / 3600
+        minutes = (seconds % 3600) / 60
+        return f"{hours:.1f}h {minutes:.0f}m"
+
+
+def run_scraper(start_time: float) -> float:
+    """Execute the web scraper phase and return phase duration."""
     logger.info("=" * 70)
     logger.info("PHASE 1: WEB SCRAPER")
     logger.info("=" * 70)
+    phase_start = time.time()
     try:
         scrape_pipeline()
+        phase_duration = time.time() - phase_start
         logger.info("Scraper phase completed successfully")
+        logger.info(f"⏱️  Scraper duration: {format_duration(phase_duration)}")
+        return phase_duration
     except Exception as e:
         logger.error(f"Scraper phase failed: {e}")
         raise
 
 
-def run_extractor() -> None:
-    """Execute the LLM extraction phase."""
+def run_extractor(start_time: float) -> float:
+    """Execute the LLM extraction phase and return phase duration."""
+    import shutil
+    from pathlib import Path
+    from datetime import datetime as dt
+    
     logger.info("=" * 70)
     logger.info("PHASE 2: LLM EXTRACTION")
     logger.info("=" * 70)
+    
+    # Create backup BEFORE extraction to prevent data loss
+    db_file = Path("duunitori_pipeline.db")
+    if db_file.exists():
+        backup_file = Path(f"duunitori_pipeline_backup_{dt.now().strftime('%Y%m%d_%H%M%S')}.db")
+        shutil.copy(str(db_file), str(backup_file))
+        logger.info(f"✓ Created pre-extraction backup: {backup_file}")
+    
+    phase_start = time.time()
     try:
         extraction_pipeline()
+        phase_duration = time.time() - phase_start
         logger.info("Extraction phase completed successfully")
+        logger.info(f"⏱️  Extraction duration: {format_duration(phase_duration)}")
+        return phase_duration
     except Exception as e:
         logger.error(f"Extraction phase failed: {e}")
         raise
 
 
-def run_analytics() -> None:
-    """Execute the analytics phase."""
+def run_analytics(start_time: float) -> float:
+    """Execute the analytics phase and return phase duration."""
     logger.info("=" * 70)
     logger.info("PHASE 3: ANALYTICS & REPORTING")
     logger.info("=" * 70)
+    phase_start = time.time()
     try:
         analytics_pipeline()
+        phase_duration = time.time() - phase_start
         logger.info("Analytics phase completed successfully")
+        logger.info(f"⏱️  Analytics duration: {format_duration(phase_duration)}")
+        return phase_duration
     except Exception as e:
         logger.error(f"Analytics phase failed: {e}")
         raise
+
+
+def run_summary_report() -> None:
+    """Generate and display hydration and market summary report."""
+    logger.info("=" * 70)
+    logger.info("PIPELINE SUMMARY REPORT")
+    logger.info("=" * 70)
+    try:
+        generate_hydration_summary()
+    except Exception as e:
+        logger.error(f"Summary report failed: {e}")
 
 
 def main() -> None:
     """
     Main entry point with CLI argument parsing.
     """
+    import shutil
+    from pathlib import Path
+    
     parser = argparse.ArgumentParser(
         description="Duunitori Resilient Production Pipeline v4",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -116,22 +168,49 @@ Examples:
     # Determine which phases to run
     run_all_phases = not any([args.scrape, args.extract, args.analytics]) or args.all
     
+    # AUTO-BACKUP: Create backup BEFORE any pipeline operations
+    db_file = Path("duunitori_pipeline.db")
+    if db_file.exists():
+        backup_file = Path(f"duunitori_pipeline_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
+        shutil.copy(str(db_file), str(backup_file))
+        logger.info(f"✓ Created pre-pipeline backup: {backup_file}")
+    
     logger.info(f"Pipeline started at {datetime.now()}")
+    pipeline_start = time.time()
+    phase_timings = {}
     
     try:
         # Always initialize database
         validate_and_initialize()
         
         if args.scrape or run_all_phases:
-            run_scraper()
+            phase_timings['scraper'] = run_scraper(pipeline_start)
+            # Generate summary after scraping
+            if args.scrape or (run_all_phases and not args.extract and not args.analytics):
+                run_summary_report()
         
         if args.extract or run_all_phases:
-            run_extractor()
+            phase_timings['extractor'] = run_extractor(pipeline_start)
         
         if args.analytics or run_all_phases:
-            run_analytics()
+            phase_timings['analytics'] = run_analytics(pipeline_start)
         
-        logger.info(f"Pipeline completed successfully at {datetime.now()}")
+        # Calculate and log total duration
+        total_duration = time.time() - pipeline_start
+        logger.info("\n" + "=" * 70)
+        logger.info("TOTAL PIPELINE EXECUTION TIME")
+        logger.info("=" * 70)
+        logger.info(f"⏱️  Total duration: {format_duration(total_duration)}")
+        logger.info(f"Pipeline completed at {datetime.now()}")
+        
+        # Show phase breakdown
+        if phase_timings:
+            logger.info("\nPhase Breakdown:")
+            for phase, duration in phase_timings.items():
+                pct = 100 * duration / total_duration
+                logger.info(f"  - {phase.upper()}: {format_duration(duration)} ({pct:.1f}%)")
+        
+        logger.info("=" * 70)
         print("\n✓ Pipeline execution completed successfully!\n")
     
     except KeyboardInterrupt:

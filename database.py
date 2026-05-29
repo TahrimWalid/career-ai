@@ -26,6 +26,7 @@ def init_database() -> None:
     """
     Initialize the SQLite database with required tables if they don't exist.
     Creates: raw_postings, structured_insights, failed_extractions
+    Applies migrations for new columns if they don't exist.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -55,6 +56,7 @@ def init_database() -> None:
                 skills TEXT,
                 frameworks_tools TEXT,
                 is_english BOOLEAN,
+                finnish_language_required BOOLEAN,
                 extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (id) REFERENCES raw_postings(id) ON DELETE CASCADE
             )
@@ -70,6 +72,18 @@ def init_database() -> None:
                 FOREIGN KEY (id) REFERENCES raw_postings(id) ON DELETE CASCADE
             )
         """)
+        
+        # MIGRATION: Add finnish_language_required column if it doesn't exist
+        cursor.execute("PRAGMA table_info(structured_insights)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'finnish_language_required' not in columns:
+            logger.info("Migrating structured_insights: Adding finnish_language_required column...")
+            cursor.execute("""
+                ALTER TABLE structured_insights
+                ADD COLUMN finnish_language_required BOOLEAN DEFAULT NULL
+            """)
+            logger.info("Migration completed successfully")
         
         conn.commit()
         logger.info("Database initialized successfully")
@@ -191,7 +205,8 @@ def insert_structured_insight(
     seniority: str,
     skills: str,
     frameworks_tools: str,
-    is_english: bool
+    is_english: bool = None,
+    finnish_language_required: bool = None
 ) -> bool:
     """
     Insert a structured insight into the database.
@@ -203,6 +218,7 @@ def insert_structured_insight(
         skills: JSON-serialized list of skills
         frameworks_tools: JSON-serialized list of frameworks/tools
         is_english: Boolean indicating if job posting is in English
+        finnish_language_required: Boolean indicating if Finnish language is required
     
     Returns:
         True if successful, False otherwise
@@ -212,10 +228,10 @@ def insert_structured_insight(
     
     try:
         cursor.execute("""
-            INSERT INTO structured_insights
-            (id, standardized_role, seniority, skills, frameworks_tools, is_english, extracted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (id, standardized_role, seniority, skills, frameworks_tools, is_english, datetime.now()))
+            INSERT OR REPLACE INTO structured_insights
+            (id, standardized_role, seniority, skills, frameworks_tools, is_english, finnish_language_required, extracted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (id, standardized_role, seniority, skills, frameworks_tools, is_english, finnish_language_required, datetime.now()))
         
         # Update extraction status in raw_postings
         cursor.execute("""
@@ -257,7 +273,7 @@ def insert_failed_extraction(
     
     try:
         cursor.execute("""
-            INSERT INTO failed_extractions
+            INSERT OR REPLACE INTO failed_extractions
             (id, raw_output, error_message, failed_at)
             VALUES (?, ?, ?, ?)
         """, (id, raw_output, error_message, datetime.now()))

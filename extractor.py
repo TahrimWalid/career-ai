@@ -31,6 +31,7 @@ class StructuredInsight(BaseModel):
     skills: list[str]
     frameworks_tools: list[str]
     is_english: bool
+    finnish_language_required: bool
     
     @field_validator("standardized_role")
     @classmethod
@@ -97,20 +98,22 @@ def extract_with_ollama(job_description: str) -> Optional[str]:
         # Truncate job description to first 2000 chars for efficiency
         truncated_desc = job_description[:2000]
         
-        system_prompt = """Extract skills and tools from job postings. Return ONLY valid JSON.
+        system_prompt = """Extract skills, tools, and language requirements from job postings. Return ONLY valid JSON.
 Skills: Languages, protocols, platforms (Python, Java, SQL, AWS).
 Tools: Frameworks, libraries, runtimes (Docker, React, Kubernetes, Node.js).
+Finnish Language: Determine if speaking or writing Finnish is explicitly required to apply.
+SENIORITY: Choose EXACTLY ONE level that best fits the job. If multiple apply, pick the median/most common one.
 
 EXAMPLE:
-Input: "We need a Python developer with AWS and Docker experience"
-Output: {"standardized_role": "Software Developer", "seniority": "Mid", "skills": ["Python", "AWS"], "frameworks_tools": ["Docker"], "is_english": true}"""
+Input: "We need a Python developer with AWS and Docker experience. Finnish language skills required."
+Output: {"standardized_role": "Software Developer", "seniority": "Mid", "skills": ["Python", "AWS"], "frameworks_tools": ["Docker"], "is_english": false, "finnish_language_required": true}"""
         
         user_message = f"""Extract from this job posting:
 
 {truncated_desc}
 
-Return ONLY this JSON (list all mentioned skills and tools):
-{{"standardized_role": "string", "seniority": "Junior|Mid|Senior|Lead|Unknown", "skills": ["skill1", "skill2"], "frameworks_tools": ["tool1", "tool2"], "is_english": true}}"""
+Return ONLY this JSON (list all mentioned skills and tools; seniority must be EXACTLY ONE of: Junior, Mid, Senior, Lead, Unknown; set finnish_language_required to true if the posting explicitly requires Finnish language fluency):
+{{"standardized_role": "string", "seniority": "Mid", "skills": ["skill1", "skill2"], "frameworks_tools": ["tool1", "tool2"], "is_english": true, "finnish_language_required": false}}"""
         
         response = client.generate(
             model="qwen2.5:3b",
@@ -174,14 +177,34 @@ def extraction_pipeline(batch_size: int = None) -> None:
     logger.info("Starting extraction pipeline")
     init_database()
     
-    # If batch_size not specified, process all pending records
+    # Verify database has hydrated jobs BEFORE starting extraction
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Check total hydrated jobs
+    cursor.execute("SELECT COUNT(*) FROM raw_postings WHERE extraction_status IN ('pending', 'done')")
+    total_hydrated = cursor.fetchone()[0]
+    
+    # Get count of pending records
+    cursor.execute("SELECT COUNT(*) FROM raw_postings WHERE extraction_status = 'pending'")
+    pending_count = cursor.fetchone()[0]
+    
+    conn.close()
+    
+    # SAFETY: Warn if no data exists
+    if total_hydrated == 0:
+        logger.error("⚠️  CRITICAL: Database has 0 hydrated jobs. Cannot run extraction.")
+        logger.error("   Run 'python main.py --scrape' first to hydrate jobs.")
+        raise RuntimeError("Extraction requires hydrated job data. Database is empty.")
+    
+    if pending_count == 0:
+        logger.warning("⚠️  No pending extractions found. All jobs already processed or no jobs hydrated.")
+        logger.warning(f"   Total hydrated: {total_hydrated} | Pending: {pending_count}")
+        return
+    
+    # Set batch size if not specified
     if batch_size is None:
-        # Get count of pending records
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM raw_postings WHERE extraction_status = 'pending'")
-        batch_size = cursor.fetchone()[0]
-        conn.close()
+        batch_size = pending_count
         logger.info(f"Processing ALL pending records: {batch_size} total")
     
     pending_records = get_pending_extractions(limit=batch_size)
@@ -190,10 +213,24 @@ def extraction_pipeline(batch_size: int = None) -> None:
     processed = 0
     successful = 0
     failed = 0
+    skipped = 0
     
     for record in pending_records:
         try:
             job_id = record["id"]
+            
+            # SMART CHECK: Skip if already extracted
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM structured_insights WHERE id = ?", (job_id,))
+            if cursor.fetchone()[0] > 0:
+                logger.info(f"Skipping already-extracted: {job_id}")
+                skipped += 1
+                processed += 1
+                conn.close()
+                continue
+            conn.close()
+            
             logger.info(f"Processing: {job_id}")
             
             # Clean HTML
@@ -235,7 +272,8 @@ def extraction_pipeline(batch_size: int = None) -> None:
                 seniority=insight.seniority,
                 skills=skills_json,
                 frameworks_tools=frameworks_json,
-                is_english=insight.is_english
+                is_english=insight.is_english,
+                finnish_language_required=insight.finnish_language_required
             )
             
             if success:
@@ -250,7 +288,7 @@ def extraction_pipeline(batch_size: int = None) -> None:
             failed += 1
             processed += 1
     
-    logger.info(f"Extraction complete. Processed: {processed}, Successful: {successful}, Failed: {failed}")
+    logger.info(f"Extraction complete. Processed: {processed}, Successful: {successful}, Failed: {failed}, Skipped: {skipped}")
 
 
 if __name__ == "__main__":

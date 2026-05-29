@@ -1,7 +1,10 @@
 """
 Analytics module for market insights extraction using SQLite aggregates and JSON functions.
-Generates reports on skills demand, frameworks, seniority distribution, and geographic patterns.
+Generates reports on skills demand, frameworks, seniority distribution, geographic patterns,
+and data quality metrics including duplicate detection and language requirements.
 """
+import hashlib
+import sqlite3
 from database import get_connection
 from logger import logger
 
@@ -170,17 +173,14 @@ def geographic_distribution() -> None:
     try:
         print_header("GEOGRAPHIC DISTRIBUTION OF JOB POSTINGS")
         
-        # Get total extracted jobs
-        cursor.execute("SELECT COUNT(*) FROM raw_postings WHERE extraction_status = 'done'")
-        total_extracted = cursor.fetchone()[0]
-        
+        # Get hydrated jobs with locations (not using extraction_status which is never updated)
         query = """
         SELECT 
             location,
             COUNT(*) as job_count,
-            ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM raw_postings WHERE extraction_status = 'done' AND location IS NOT NULL AND location NOT IN ('', 'Pending')), 2) as percentage
+            ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM raw_postings WHERE raw_html IS NOT NULL AND location IS NOT NULL AND location NOT IN ('', 'Pending', 'Unknown')), 2) as percentage
         FROM raw_postings
-        WHERE extraction_status = 'done' AND location IS NOT NULL AND location NOT IN ('', 'Pending')
+        WHERE raw_html IS NOT NULL AND location IS NOT NULL AND location NOT IN ('', 'Pending', 'Unknown')
         GROUP BY location
         ORDER BY job_count DESC
         LIMIT 15
@@ -194,7 +194,7 @@ def geographic_distribution() -> None:
             return
         
         valid_locations = sum(count for _, count, _ in rows)
-        print(f"Found jobs in {len(rows)} locations (out of {total_extracted} extracted)\n")
+        print(f"Found jobs in {len(rows)} locations with location data\n")
         print(f"{'Location':<30} {'Job Count':<15} {'Percentage':<12}")
         print("-" * 70)
         
@@ -294,6 +294,248 @@ def skill_seniority_correlation() -> None:
         conn.close()
 
 
+def scan_duplicates() -> dict:
+    """
+    Scan for duplicate job postings by title hash similarity.
+    
+    Returns:
+        Dictionary with duplicate statistics
+    """
+    logger.info("Scanning for duplicate job postings...")
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Get all hydrated jobs with titles
+        cursor.execute("""
+            SELECT id, title FROM raw_postings
+            WHERE raw_html IS NOT NULL AND raw_html != ''
+            ORDER BY title ASC
+        """)
+        
+        records = cursor.fetchall()
+        title_hashes = {}
+        duplicates = []
+        
+        for record_id, title in records:
+            if not title or title == "Unknown":
+                continue
+            
+            # Calculate MD5 hash of title for duplicate detection
+            title_hash = hashlib.md5(title.lower().strip().encode()).hexdigest()
+            
+            if title_hash in title_hashes:
+                duplicates.append({
+                    'id': record_id,
+                    'title': title,
+                    'duplicate_of': title_hashes[title_hash]['id']
+                })
+            else:
+                title_hashes[title_hash] = {'id': record_id, 'title': title}
+        
+        logger.info(f"Found {len(duplicates)} potential duplicates out of {len(records)} hydrated jobs")
+        return {
+            'total_hydrated': len(records),
+            'unique_titles': len(title_hashes),
+            'duplicate_count': len(duplicates)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error scanning duplicates: {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def analyze_company_extraction_quality() -> dict:
+    """
+    Analyze company extraction quality and identify missing/unknown companies.
+    
+    Returns:
+        Dictionary with company extraction statistics
+    """
+    logger.info("Analyzing company extraction quality...")
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM raw_postings
+            WHERE raw_html IS NOT NULL AND raw_html != ''
+        """)
+        total_hydrated = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT COUNT(*) FROM raw_postings
+            WHERE company = 'Unknown' AND raw_html IS NOT NULL AND raw_html != ''
+        """)
+        unknown_count = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT COUNT(DISTINCT company) FROM raw_postings
+            WHERE raw_html IS NOT NULL AND raw_html != ''
+        """)
+        unique_companies = cursor.fetchone()[0]
+        
+        unknown_pct = 100 * unknown_count / total_hydrated if total_hydrated > 0 else 0
+        logger.info(f"Company extraction: {unknown_count}/{total_hydrated} unknown ({unknown_pct:.1f}%)")
+        
+        return {
+            'total_hydrated': total_hydrated,
+            'unknown_count': unknown_count,
+            'unknown_percentage': unknown_pct,
+            'unique_companies': unique_companies
+        }
+    
+    except Exception as e:
+        logger.error(f"Error analyzing company extraction: {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def analyze_location_extraction_quality() -> dict:
+    """
+    Analyze location extraction quality.
+    
+    Returns:
+        Dictionary with location statistics
+    """
+    logger.info("Analyzing location extraction quality...")
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM raw_postings
+            WHERE raw_html IS NOT NULL AND raw_html != ''
+        """)
+        total_hydrated = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT COUNT(*) FROM raw_postings
+            WHERE location = 'Unknown' AND raw_html IS NOT NULL AND raw_html != ''
+        """)
+        unknown_count = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT COUNT(DISTINCT location) FROM raw_postings
+            WHERE raw_html IS NOT NULL AND raw_html != ''
+        """)
+        unique_locations = cursor.fetchone()[0]
+        
+        unknown_pct = 100 * unknown_count / total_hydrated if total_hydrated > 0 else 0
+        logger.info(f"Location extraction: {unknown_count}/{total_hydrated} unknown ({unknown_pct:.1f}%)")
+        
+        return {
+            'total_hydrated': total_hydrated,
+            'unknown_count': unknown_count,
+            'unknown_percentage': unknown_pct,
+            'unique_locations': unique_locations
+        }
+    
+    except Exception as e:
+        logger.error(f"Error analyzing location extraction: {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def analyze_finnish_language_distribution() -> dict:
+    """
+    Analyze distribution of Finnish language requirements across extracted jobs.
+    
+    Returns:
+        Dictionary with language requirement statistics
+    """
+    logger.info("Analyzing Finnish language requirements...")
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN finnish_language_required = 1 THEN 1 ELSE 0 END) as requires_finnish,
+                SUM(CASE WHEN finnish_language_required = 0 THEN 1 ELSE 0 END) as no_finnish,
+                SUM(CASE WHEN finnish_language_required IS NULL THEN 1 ELSE 0 END) as unknown
+            FROM structured_insights
+        """)
+        
+        result = cursor.fetchone()
+        total_extracted = result[0] or 0
+        requires_finnish = result[1] or 0
+        no_finnish = result[2] or 0
+        unknown = result[3] or 0
+        
+        finnish_pct = 100 * requires_finnish / total_extracted if total_extracted > 0 else 0
+        logger.info(f"Language analysis: {requires_finnish}/{total_extracted} require Finnish ({finnish_pct:.1f}%)")
+        
+        return {
+            'total_extracted': total_extracted,
+            'requires_finnish': requires_finnish,
+            'no_finnish_required': no_finnish,
+            'unknown': unknown,
+            'finnish_percentage': finnish_pct
+        }
+    
+    except Exception as e:
+        logger.error(f"Error analyzing language requirements: {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def data_quality_report() -> None:
+    """
+    Display comprehensive data quality and integrity report.
+    """
+    print_header("DATA QUALITY & INTEGRITY REPORT")
+    
+    print("\n📊 HYDRATION & EXTRACTION STATUS:")
+    cursor = get_connection().cursor()
+    
+    # Count total and hydrated from raw_postings
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN raw_html IS NOT NULL AND raw_html != '' THEN 1 ELSE 0 END) as hydrated
+        FROM raw_postings
+    """)
+    total, hydrated = cursor.fetchone()
+    
+    # Count extracted from structured_insights (the actual extracted data)
+    cursor.execute("SELECT COUNT(*) FROM structured_insights")
+    extracted = cursor.fetchone()[0]
+    
+    print(f"  Total jobs: {total}")
+    print(f"  Hydrated: {hydrated} ({100*hydrated/total if total else 0:.1f}%)")
+    print(f"  Extracted: {extracted} ({100*extracted/total if total else 0:.1f}%)")
+    
+    print("\n🏢 COMPANY EXTRACTION QUALITY:")
+    company_stats = analyze_company_extraction_quality()
+    print(f"  Unknown companies: {company_stats.get('unknown_count', 0)}/{company_stats.get('total_hydrated', 0)} ({company_stats.get('unknown_percentage', 0):.1f}%)")
+    print(f"  Unique companies found: {company_stats.get('unique_companies', 0)}")
+    
+    print("\n📍 LOCATION EXTRACTION QUALITY:")
+    location_stats = analyze_location_extraction_quality()
+    print(f"  Unknown locations: {location_stats.get('unknown_count', 0)}/{location_stats.get('total_hydrated', 0)} ({location_stats.get('unknown_percentage', 0):.1f}%)")
+    print(f"  Unique locations found: {location_stats.get('unique_locations', 0)}")
+    
+    print("\n🔄 DUPLICATE DETECTION:")
+    dup_stats = scan_duplicates()
+    print(f"  Potential duplicates: {dup_stats.get('duplicate_count', 0)}/{dup_stats.get('total_hydrated', 0)}")
+    
+    print("\n🇫🇮 FINNISH LANGUAGE REQUIREMENTS:")
+    lang_stats = analyze_finnish_language_distribution()
+    print(f"  Jobs extracted: {lang_stats.get('total_extracted', 0)}")
+    print(f"  Require Finnish: {lang_stats.get('requires_finnish', 0)} ({lang_stats.get('finnish_percentage', 0):.1f}%)")
+    print(f"  No Finnish required: {lang_stats.get('no_finnish_required', 0)}")
+    print(f"  Unknown: {lang_stats.get('unknown', 0)}")
+    
+    print()
+
+
 def analytics_pipeline() -> None:
     """
     Run the complete analytics pipeline and print all reports to stdout.
@@ -301,6 +543,10 @@ def analytics_pipeline() -> None:
     logger.info("Starting analytics pipeline")
     
     try:
+        # First show data quality report
+        data_quality_report()
+        
+        # Then show market analysis
         top_skills()
         top_frameworks_tools()
         seniority_distribution()
