@@ -173,7 +173,7 @@ open report.html
 
 ## Project Context
 
-Built as a portfolio piece while transitioning into cloud/networking (CCNA + AZ-104). The irony of using a data pipeline to analyze the job market I'm trying to enter was intentional.
+Built as a portfolio piece while transitioning into cloud/networking. The irony of using a data pipeline to analyze the job market I'm trying to enter was intentional.
 
 The Finnish IT market data here is real and current as of May 2026. Use it for career planning, not hiring decisions.
 
