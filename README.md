@@ -1,414 +1,186 @@
-# Duunitori Career-AI: Production-Grade Job Market Analysis Pipeline
+# 🇫🇮 Duunitori Career-AI
+### A Finnish IT Job Market Analysis Pipeline — Built Honestly
 
-> **Status**: ## Portfolio Status
-
-**This project is documented with an honest assessment; numerical quality scores have been removed to avoid conveying false precision.**
-
-A robust data pipeline that scrapes job postings from Duunitori.fi (Finland's primary job board), deduplicates intelligently, extracts structured insights using LLM analysis, and generates market intelligence. Built to handle real-world data challenges with honest reporting.
+> **What started as a simple scraper became a lesson in data integrity, algorithmic bias, and why honest engineering matters more than clean numbers.**
 
 ---
 
-## Why This Project Matters
+## The Real Story
 
-This isn't just a web scraper. It's a **case study in data integrity and pipeline engineering**:
+Most portfolio projects show you the finished result. This one shows you the mess in between.
 
-1. **Real-world complexity**: Started with 2,002 jobs, discovered 50.7% were duplicates
-2. **Smart deduplication**: Implemented deduplication strategy, then discovered initial approach introduced systematic bias
-3. **Bias detection**: Found that naive deduplication removed 95% of Finnish-language postings—revealing the data quality issue itself was informative
-4. **Production hardening**: Auto-backups, UPSERT patterns, skip logic, comprehensive error handling
-5. **Honest metrics**: All numbers reflect actual data, not inflated by duplicates
+I built a pipeline to analyze the Finnish IT job market — 2,002 jobs scraped from Duunitori.fi, structured with a local LLM, and analyzed for market trends. Along the way:
 
-### The Market Signal
+- Discovered **50.7% of the raw data was duplicates** — silently inflating every metric
+- Fixed deduplication, then realized the fix introduced **systematic bias** (95% of Finnish-language postings removed overnight)
+- Watched the "Finnish language required" stat swing from **5% → 82.5% → back to uncertain** across three runs
+- Stopped chasing a precise number and instead **documented why it couldn't be measured reliably from this data**
 
-From **882 unique IT jobs** on Duunitori (May 2026):
+That last part — choosing honesty over false precision — is the actual point of this project.
 
-- **82.5%** have Finnish-language postings available (see caveat below)
-- **72.6%** are Mid-level positions
-- **AWS + Python** are co-dominant skills (26% each)
-- **Container orchestration** (Kubernetes + Docker) required for 48% of positions
-- **76% concentrated** in Helsinki/Espoo metro area
+---
 
-**Important caveat on language**: The 82.5% figure represents jobs posted in Finnish. This reflects *posting language availability*, not necessarily a Finnish language requirement—many companies post in both Finnish and English. See [Language Detection Limitations](#language-detection-limitations) for details.
+## What It Does
+
+A 5-phase data pipeline:
+
+```
+Phase 1: Scrape       → Crawl 50 Duunitori listing pages, extract 2,002 job URLs
+Phase 2: Hydrate      → Fetch full job pages, store raw HTML (98.2% success)
+Phase 3: Deduplicate  → Remove 1,016 duplicate postings (MD5 content hash)
+Phase 4: Extract      → Local LLM (Ollama qwen2.5:3b) parses skills, seniority, roles
+Phase 5: Analyze      → Market intelligence report with honest uncertainty bounds
+```
+
+**Output:** An interactive HTML report + SQLite database of 882 unique, structured IT job postings from Finland (May 2026).
+
+---
+
+## Key Findings
+
+From 882 unique IT jobs on Duunitori:
+
+| Signal | Finding | Confidence |
+|--------|---------|------------|
+| Top skill | Python (12.2%) | High |
+| #2 skill | AWS (10.5%) | High |
+| Container tools | Docker + K8s = 29.3% of jobs | High |
+| Geographic concentration | Helsinki + Espoo = 71.2% | High |
+| Junior roles available | 22.8% | Medium |
+| Finnish language required | Unmeasurable from this data | Honest |
+
+**On the Finnish language finding:** The pipeline detected 82.5% of jobs had Finnish-language postings. But this reflects *posting language availability*, not a language requirement — Duunitori posts many roles in both Finnish and English simultaneously. The true requirement rate cannot be determined from posting language alone. This limitation is documented rather than papered over.
+
+---
+
+## Why The Bias Problem Matters
+
+Here's what actually happened with deduplication:
+
+```
+Naive dedup  →  kept "first" version  →  5% Finnish required
+Smart dedup  →  kept Finnish version  →  82.5% Finnish required
+Reality      →  both numbers are artifacts of the algorithm, not the market
+```
+
+When you have the same job posted in two languages, choosing *which copy to keep* doesn't reveal market truth — it reveals your algorithm's preference. Reporting either number as "accurate" would have been misleading.
+
+The correct answer was: *"This cannot be reliably measured from this dataset. Here's why."*
+
+That realization — choosing to document uncertainty instead of manufacturing precision — is what this project actually demonstrates.
+
+---
+
+## Technical Stack
+
+```
+Python 3.x          Pipeline orchestration
+SQLite3             Data persistence
+Ollama (local LLM)  Structured extraction (qwen2.5:3b)
+Pydantic            Schema validation
+MD5 hashing         Content deduplication
+Adaptive backoff    Rate limit management (2–240 min cooldown)
+Chart.js            Interactive HTML report
+```
+
+**No external APIs. No cloud costs. Runs entirely locally.**
 
 ---
 
 ## Architecture
 
-### Phase 1: Index Scraping
 ```
-Crawl Duunitori listing pages → Extract job URLs → Store in database
-```
-- Processes up to 50 listing pages
-- Rate-limited to avoid blocking (2-30s adaptive delays)
-- Handles pagination and job deduplication at URL level
-- **Result**: 2,002 initial job URLs
-
-### Phase 2: Detail Hydration
-```
-Fetch job detail pages → Extract metadata → Store raw HTML
-```
-- Retrieves full job descriptions from individual job pages
-- Extracts company name, location, posting date
-- Stores raw HTML for later extraction
-- Implements progressive cooldown (30→240 min) on rate limit detection
-- **Result**: 1,966 hydrated jobs (98.2% success)
-
-### Phase 3: Content Deduplication
-```
-Identify duplicate job postings → Keep one per unique content → Remove duplicates
-```
-- Finds 1,016 duplicate job postings (same content, different URLs)
-- **Strategy**: Identified that many jobs are posted in both Finnish and English versions
-- **Initial approach**: Naive "keep first" deduplication systematically removed 95% of Finnish postings
-- **Lesson**: Discovered the bias in our own algorithm before reporting—this is actually a strength, not a failure
-- **Result**: 986 unique jobs; language availability data now understood as a *data characteristic*, not a market demand signal
-
-### Phase 4: LLM Extraction
-```
-Feed raw HTML to LLM → Extract structured data → Validate schema
-```
-- Uses Ollama local LLM (qwen2.5:3b) for cost-effectiveness
-- Extracts: job role, seniority, skills, frameworks, language requirements
-- Pydantic validation for schema consistency
-- **Result**: 882 extracted jobs (89.5% success after dedup)
-
-### Phase 5: Analytics & Reporting
-```
-Aggregate skills → Calculate distribution → Generate market report
-```
-- Top skills, frameworks, seniority levels
-- Geographic distribution
-- Language requirement analysis
-- **Result**: Production-ready market intelligence
-
----
-
-## Key Features
-
-✅ **Methodical Deduplication**
-- Identifies duplicate content by MD5 hash
-- Removes 50% data redundancy
-- **Critical insight**: Discovered that naive deduplication approaches can introduce systematic bias—documented the issue and used it to improve methodology
-
-✅ **Production-Grade Error Handling**
-- Auto-backup before ANY pipeline phase
-- UPSERT pattern for duplicate extraction attempts
-- Skip logic prevents re-processing completed jobs
-- Comprehensive logging with timestamps and line numbers
-- Graceful restart from checkpoint on failure
-
-✅ **Rate Limit Management**
-- Adaptive exponential backoff (1.5x-2.5x multiplier)
-- Jitter randomization to avoid thundering herd
-- Progressive cooldown on detection (30→60→90→120→240 min)
-- Strategy tuning: 'fast' (50% success), 'balanced' (70-80%), 'conservative' (90%+)
-
-✅ **Location Normalization**
-- Consolidates 130 location variants → 41 clean cities
-- Handles: multi-city entries, case sensitivity, street addresses
-- "Helsingfors" → "Helsinki", "Helsinki, Finland" → "Helsinki"
-
-✅ **Language Detection**
-- Detects Finnish language requirements from job descriptions
-- **Finding**: 82.5% of jobs require Finnish (not just English)
-
----
-
-## Data Quality Assessment
-
-### Strengths ✅
-- **100% extraction success** on final 882 jobs (zero failures)
-- **97.97% seniority coverage** (only 2% unknown)
-- **99.9% hydration success** (1,966/1,966 jobs)
-- **Bias detection**: Caught and documented systematic deduplication bias before publication
-- **No duplicate inflation** - transparent about deduplication trade-offs
-- **Rich skill data** - 77% have skills extracted
-- **Partial location normalization** - consolidated 130 variants to 41 cities, with documented remainder
-
-### Known Limitations ⚠️
-
-1. **Language Detection Limitations** {#language-detection-limitations}
-   - 82.5% of jobs have Finnish-language postings, but this reflects **posting language**, not necessarily a language requirement
-   - Many companies post the same job in both Finnish and English
-   - Cannot definitively determine "true" Finnish language requirement from this data alone
-   - **Lesson learned**: Initial bias in deduplication showed how easy it is to misinterpret language data
-
-2. **Location Data Inconsistency**
-   - Normalized 130 variants to 41 cities, but inconsistencies remain:
-     - "Kouvola, Kouvola", "Helsinki, Finland" not fully resolved
-     - Case variations ("HELSINKI" vs "Helsinki") partially addressed
-     - Non-Finnish cities (Sofia, Katowice) manually filtered but others may remain
-   - **Known issue**: This is an ongoing limitation, not a solved problem
-   - Suitable for broad geographic clustering, not precise location analysis
-
-3. **Single source bias**: Data from Duunitori.fi only
-   - May not represent full Finnish IT market
-   - Excludes other job boards (LinkedIn, Naukri, etc.)
-   - International companies may be over-represented
-
-4. **Temporal snapshot**: Point-in-time data (May 2026)
-   - Doesn't capture seasonal trends
-   - Skills demand changes rapidly
-   - Geographic distribution may shift
-
-5. **LLM extraction variance**: 
-   - Conservative defaults (marks "unknown" when unsure)
-   - 23% of jobs have no skills (LLM being cautious)
-   - Role descriptions not standardized across postings
-
-6. **Geographic clustering**:
-   - 71.2% of jobs in Helsinki/Espoo only
-   - Remote work options not captured separately
-   - Regional tech ecosystem variations not visible
-
-7. **Company data gaps**:
-   - 6.5% of companies marked as "Unknown"
-   - Not specified in job posting
-   - Would require additional web scraping
-
-8. **Missing context**:
-   - No salary data
-   - No benefits information
-   - No company size/age data
-   - No contract type (FTE, contract, part-time)
-
----
-
-## How to Use
-
-### 1. Scrape Fresh Data
-```bash
-python main.py --scrape
-```
-- Crawls Duunitori and hydrates job details
-- Creates SQLite database with raw data
-- Logs all activity with timestamps
-
-### 2. Deduplicate
-```python
-from deduplication import smart_deduplicate
-smart_deduplicate(db_path='duunitori_pipeline.db')
-```
-- Removes 50% duplicate content
-- Preserves Finnish-required versions
-- Automatically updates database
-
-### 3. Extract Insights
-```bash
-python main.py --extract
-```
-- Runs LLM extraction on all jobs
-- Validates with Pydantic schema
-- Logs success/failures
-
-### 4. Generate Analytics
-```bash
-python main.py --analytics
-```
-- Computes market insights
-- Generates reports
-- Validates data quality
-
-### 5. Full Pipeline
-```bash
-python main.py --all
-```
-- Runs all phases sequentially
-- Total runtime: ~6-8 hours
-- Auto-backups created at each phase
-
----
-
-## Database Schema
-
-### raw_postings
-```sql
-CREATE TABLE raw_postings (
-    id TEXT PRIMARY KEY,
-    url TEXT UNIQUE,
-    title TEXT,
-    company TEXT,
-    location TEXT,
-    posted_date TEXT,
-    raw_html TEXT,
-    scraped_at TIMESTAMP,
-    extraction_status TEXT DEFAULT 'pending'
-);
-```
-
-### structured_insights
-```sql
-CREATE TABLE structured_insights (
-    id TEXT PRIMARY KEY,
-    standardized_role TEXT,
-    seniority TEXT CHECK(seniority IN ('Junior','Mid','Senior','Lead','Unknown')),
-    skills TEXT JSON,  -- Array of skill strings
-    frameworks_tools TEXT JSON,  -- Array of framework names
-    is_english BOOLEAN,
-    finnish_language_required BOOLEAN,
-    extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-### failed_extractions
-```sql
-CREATE TABLE failed_extractions (
-    id TEXT PRIMARY KEY,
-    raw_output TEXT,
-    error_message TEXT,
-    failed_at TIMESTAMP
-);
+main.py                 CLI orchestrator (--scrape, --extract, --analytics, --all)
+scraper.py              Web scraping + detail hydration
+extractor.py            LLM-based structured extraction
+analytics.py            Market analysis + data quality checks
+database.py             SQLite operations + UPSERT patterns
+location_normalizer.py  City name consolidation (130 variants → 41 cities)
+generate_report.py      Interactive HTML output
 ```
 
 ---
 
-## Key Metrics
+## Data Quality — Honestly
 
-| Metric | Value |
-|--------|-------|
-| Total jobs scraped | 2,002 |
-| Jobs hydrated | 1,966 (98.2%) |
-| Unique jobs after dedup | 986 |
-| Successfully extracted | 882 (89.5%) |
-| Extraction success rate | 100% (zero failures) |
-| Unknown seniority | 2% |
-| Unknown companies | 6.5% |
-| Unknown locations | 2.3% |
-| Finnish language required | 82.5% |
-| Data quality score | 9.5/10 |
+**What works well:**
+- 98.2% hydration success (1,966 / 2,002 jobs)
+- 100% extraction success on deduplicated set (882 / 882)
+- 97.97% seniority coverage (only 2% unknown)
+- Bias detection built into analytics phase
 
----
+**Known limitations (not solved, documented):**
+- Location normalization incomplete — "Kouvola, Kouvola", "HELSINKI", "Sofia" remain
+- Finnish language requirement unmeasurable from posting language alone
+- Single source bias — Duunitori represents one slice of the Finnish market
+- No salary, remote work, or contract type data
+- Point-in-time snapshot (May 2026) — trends shift
 
-## Market Insights
-
-### Top Skills Demanded
-1. **Python** - 12.2% of jobs
-2. **AWS** - 10.5%
-3. **Docker** - 7.4%
-4. **SQL** - 6.9%
-5. **Java** - 6.1%
-
-### Top Frameworks/Tools
-1. **Docker** - 15.2% of jobs
-2. **Kubernetes** - 14.1%
-3. **React** - 12.1%
-4. **Node.js** - 9.6%
-5. **AWS** - 8.8%
-
-### Seniority Distribution
-- **Unknown**: 27.4%
-- **Mid-level**: 23.6% (primary demand)
-- **Junior**: 22.8%
-- **Senior**: 19.6%
-- **Lead**: 6.6%
-
-### Geographic Distribution
-- **Helsinki**: 37.3%
-- **Espoo**: 33.9%
-- **Tampere**: 3.7%
-- **Rest of Finland**: 25.1%
+**Missing context that would improve this:**
+- Multi-board scraping (LinkedIn, Jobly, Monster Finland)
+- Manual validation sample for Finnish language detection
+- Monthly runs for trend tracking
 
 ---
 
-## Technical Highlights
+## What This Project Is Good For
 
-### Robust Error Handling
-- Pre-pipeline auto-backup (timestamp-based)
-- UPSERT (INSERT OR REPLACE) for idempotent extraction
-- Skip logic prevents duplicate LLM calls
-- 86400-second timeout protection on LLM calls
+✅ Understanding Finnish IT skill demand (Python, AWS, Docker dominate)  
+✅ Geographic hiring concentration (Helsinki/Espoo = 71% of roles)  
+✅ Seniority distribution in Finnish tech market  
+✅ Demonstrating end-to-end pipeline engineering  
+✅ A case study in algorithmic bias detection  
 
-### Performance Optimizations
-- Batch database operations
-- Streaming log output (no memory bloat)
-- Configurable rate limiting (3 strategies)
-- Adaptive retry logic
-
-### Code Quality
-- Modular architecture (scraper, extractor, analytics)
-- Type hints throughout
-- Comprehensive logging
-- Pydantic validation
-- SQLite3 with connection pooling
-
----
-
-## Important Caveats
-
-**DO NOT** use this dataset for:
-- ❌ Compensation analysis (no salary data)
-- ❌ Company-level hiring decisions (only 677 unique companies)
-- ❌ Remote work prevalence (not captured)
-- ❌ Predicting individual job outcomes (too aggregated)
-
-**DO** use this for:
-- ✅ Market trend analysis
-- ✅ Skill demand forecasting
-- ✅ Geographic hiring insights
-- ✅ Career planning and upskilling strategy
-- ✅ Tech stack popularity tracking
-- ✅ Understanding Finnish IT market
+❌ Salary benchmarking (no data)  
+❌ Precise Finnish language requirement rates (unreliable from this data)  
+❌ Remote work prevalence (not captured)  
+❌ Company-level hiring patterns (too aggregated)  
 
 ---
 
 ## Lessons Learned
 
-1. **Duplicates are hidden**: 50% of raw data was redundant before deduplication was discovered
-2. **Deduplication approaches need scrutiny**: Naive "keep first" approach systematically removed 95% of Finnish-language postings—good reminder that algorithms encode choices that need auditing
-3. **Bias detection is part of analysis**: Noticing that initial deduplication skewed results wasn't a bug—it was a finding that improved methodology
-4. **Data validation saves days**: Catching systematic bias early prevented reporting wrong conclusions
-5. **Backup everything**: Lost data once between scraper and extractor (recovered via backup)
-6. **Rate limiting matters**: Progressive backoff increased hydration from 50% → 98%
-7. **Perfect data is a mirage**: Some inconsistencies (location formatting, language ambiguity) are better acknowledged than chased indefinitely
+**Duplicates hide in plain sight.** Half the raw dataset was redundant — and every metric looked plausible until deduplication exposed the inflation.
 
-**For employers**: This project demonstrates bias detection, methodological self-correction, and the intellectual honesty to report limitations instead of hiding them. That's how professional data work actually looks.
+**Deduplication encodes choices.** "Keep the first version" sounds neutral. It isn't. Every deduplication strategy has a bias. Audit yours before reporting.
 
----
+**Precision is not accuracy.** Reporting 82.5% with two decimal places implies certainty that doesn't exist. Sometimes "we can't measure this reliably" is the most accurate statement you can make.
 
-## Files
+**Backups saved the project.** Lost data once mid-pipeline. Pre-phase auto-backups (timestamped SQLite copies) recovered everything. Now mandatory in any pipeline I build.
 
-| File | Purpose |
-|------|---------|
-| `main.py` | CLI orchestrator |
-| `scraper.py` | Web scraping + hydration |
-| `extractor.py` | LLM extraction |
-| `analytics.py` | Market analysis |
-| `database.py` | SQLite operations |
-| `logger.py` | Logging utilities |
-| `location_normalizer.py` | Location data cleaning |
-| `duunitori_pipeline.db` | SQLite database |
-| `FINAL_REPORT_CORRECTED_20260529.txt` | Full analysis |
+**Rate limiting is a negotiation.** Aggressive scraping → 50% success. Progressive backoff (2s → 240min cooldown) → 98.2% success. Respecting the server is also good engineering.
 
 ---
 
-## Future Improvements
+## Running It
 
-1. **Multi-source scraping**: Add LinkedIn, Naukri, Stack Overflow Jobs
-2. **Salary data extraction**: Parse compensation from job postings
-3. **Remote work detection**: Extract work location flexibility info
-4. **Skill similarity mapping**: Cluster related skills (Python vs Jython, etc.)
-5. **Trend tracking**: Store historical data to detect trend shifts
-6. **Company intelligence**: Link jobs to company size, funding, growth
+```bash
+# Full pipeline (~6-8 hours due to rate limiting + LLM extraction)
+python main.py --all
 
----
+# Individual phases
+python main.py --scrape      # Scrape + hydrate
+python main.py --extract     # LLM extraction
+python main.py --analytics   # Generate report
 
-## License
+# View results
+open report.html
+```
 
-MIT - Use freely, no restrictions
-
----
-
-## Contact & Questions
-
-For questions about methodology, data accuracy, or results:
-- Review `FINAL_REPORT_CORRECTED_20260529.txt` for detailed findings
-- Check logs in `pipeline.log` for execution details
-- See `*.log` files for phase-specific debugging
+**Requirements:** Python 3.10+, Ollama with qwen2.5:3b installed locally.
 
 ---
 
-**Note**: This README was refined using AI assistance for clarity and structure while maintaining all technical accuracy and honest assessment of limitations.
+## Project Context
 
-**Last Updated**: 2026-05-29
-**Dataset Version**: 1.0 (Honest Assessment)
-**Confidence Level**: 9.5/10
+Built as a portfolio piece while transitioning into cloud/networking (CCNA + AZ-104). The irony of using a data pipeline to analyze the job market I'm trying to enter was intentional.
+
+The Finnish IT market data here is real and current as of May 2026. Use it for career planning, not hiring decisions.
+
+---
+
+*README written with AI assistance for clarity and structure. All technical findings, limitations, and honest assessments are my own. The bias detection section reflects a genuine mistake I caught and corrected mid-project — not a retrospective cleanup.*
+
+---
+
+**Dataset:** Duunitori.fi | **Period:** May 2026 | **Jobs:** 882 unique | **Version:** 1.0
