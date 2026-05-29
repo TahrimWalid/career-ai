@@ -1,6 +1,8 @@
 # Duunitori Career-AI: Production-Grade Job Market Analysis Pipeline
 
-> **Status**: ✅ Production-Ready | **Data Quality**: 9.5/10 | **Dataset Size**: 882 unique jobs
+> **Status**: ## Portfolio Status
+
+**This project is documented with an honest assessment; numerical quality scores have been removed to avoid conveying false precision.**
 
 A robust data pipeline that scrapes job postings from Duunitori.fi (Finland's primary job board), deduplicates intelligently, extracts structured insights using LLM analysis, and generates market intelligence. Built to handle real-world data challenges with honest reporting.
 
@@ -128,7 +130,7 @@ Aggregate skills → Calculate distribution → Generate market report
 1. **Language Detection Limitations** {#language-detection-limitations}
    - 82.5% of jobs have Finnish-language postings, but this reflects **posting language**, not necessarily a language requirement
    - Many companies post the same job in both Finnish and English
-   - Cannot definitively determine "true" French language requirement from this data alone
+   - Cannot definitively determine "true" Finnish language requirement from this data alone
    - **Lesson learned**: Initial bias in deduplication showed how easy it is to misinterpret language data
 
 2. **Location Data Inconsistency**
@@ -352,7 +354,7 @@ CREATE TABLE failed_extractions (
 ## Lessons Learned
 
 1. **Duplicates are hidden**: 50% of raw data was redundant before deduplication was discovered
-2. **Deduplication approaches need scrutiny**: Naive "keep first" approach systematically removed 95% of French-language postings—good reminder that algorithms encode choices that need auditing
+2. **Deduplication approaches need scrutiny**: Naive "keep first" approach systematically removed 95% of Finnish-language postings—good reminder that algorithms encode choices that need auditing
 3. **Bias detection is part of analysis**: Noticing that initial deduplication skewed results wasn't a bug—it was a finding that improved methodology
 4. **Data validation saves days**: Catching systematic bias early prevented reporting wrong conclusions
 5. **Backup everything**: Lost data once between scraper and extractor (recovered via backup)
