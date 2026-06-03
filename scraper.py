@@ -19,10 +19,24 @@ from logger import logger
 BASE_URL = "https://duunitori.fi/tyopaikat/ala/tieto-tietoliikennetekniikka"
 
 # Resilience parameters
-MIN_DELAY = 2
-MAX_DELAY = 5
+MIN_DELAY = 5  # Increased from 2
+MAX_DELAY = 15  # Increased from 5
 MAX_RETRIES = 3
-BACKOFF_FACTOR = 2
+BACKOFF_FACTOR = 3  # More aggressive backoff
+RATE_LIMIT_DELAY = 30  # Additional delay after 403
+
+# Rotating user agents to avoid detection
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:91.0) Gecko/20100101 Firefox/91.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:91.0) Gecko/20100101 Firefox/91.0",
+]
+
+def get_random_user_agent() -> str:
+    """Return a random user agent from the pool."""
+    return random.choice(USER_AGENTS)
 
 
 def step1_index_scraping(max_pages: int = 50) -> int:
@@ -58,7 +72,7 @@ def step1_index_scraping(max_pages: int = 50) -> int:
                     BASE_URL,
                     params=params,
                     timeout=10,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                    headers={"User-Agent": get_random_user_agent()}
                 )
                 
                 if response.status_code == 200:
@@ -111,6 +125,12 @@ def step1_index_scraping(max_pages: int = 50) -> int:
                     
                     page += 1
                     break  # Move to next page
+                
+                elif response.status_code == 403:
+                    # Rate limited - aggressive backoff
+                    wait_time = RATE_LIMIT_DELAY * (BACKOFF_FACTOR ** attempt)
+                    logger.warning(f"HTTP 403 Forbidden on page {page}. Backing off for {wait_time}s...")
+                    time.sleep(wait_time)
                 
                 elif response.status_code in [429, 503]:
                     wait_time = BACKOFF_FACTOR ** attempt
@@ -184,7 +204,7 @@ def step2_detail_hydration() -> int:
                     response = requests.get(
                         job_url,
                         timeout=10,
-                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                        headers={"User-Agent": get_random_user_agent()}
                     )
                     
                     if response.status_code == 200:
@@ -229,6 +249,12 @@ def step2_detail_hydration() -> int:
                             conn.close()
                         
                         break  # Move to next record
+                    
+                    elif response.status_code == 403:
+                        # Rate limited - aggressive backoff
+                        wait_time = RATE_LIMIT_DELAY * (BACKOFF_FACTOR ** attempt)
+                        logger.warning(f"HTTP 403 Forbidden. Backing off for {wait_time}s...")
+                        time.sleep(wait_time)
                     
                     elif response.status_code in [429, 503]:
                         wait_time = BACKOFF_FACTOR ** attempt
