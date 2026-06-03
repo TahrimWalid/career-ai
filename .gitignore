@@ -32,5 +32,14 @@ SESSION_COMPLETION.md
 INTERVIEW_STRATEGY.md
 FIXES_APPLIED.md
 
+# Temporary analysis & reporting files (pipeline run outputs)
+*.txt
+*.md
+!README.md
+*.sh
+MONITOR*.sh
+deduplicate_dataset.py
+backed_up_db*.tar.gz
+
 # Data & Output
 data/

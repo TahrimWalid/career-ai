@@ -101,12 +101,12 @@ def extract_with_ollama(job_description: str) -> Optional[str]:
         system_prompt = """Extract skills, tools, and language requirements from job postings. Return ONLY valid JSON.
 Skills: Languages, protocols, platforms (Python, Java, SQL, AWS).
 Tools: Frameworks, libraries, runtimes (Docker, React, Kubernetes, Node.js).
-Finnish Language: Determine if speaking or writing Finnish is explicitly required to apply.
+Finnish Language: Set to TRUE ONLY if the job posting EXPLICITLY states that Finnish language skills are required (look for phrases like "suomen kielen taito", "suomea vaaditaan", "Finnish language required"). Ignore HTML metadata like "Julkaistu" (published). Most postings are bilingual - set to FALSE unless explicitly required.
 SENIORITY: Choose EXACTLY ONE level that best fits the job. If multiple apply, pick the median/most common one.
 
 EXAMPLE:
-Input: "We need a Python developer with AWS and Docker experience. Finnish language skills required."
-Output: {"standardized_role": "Software Developer", "seniority": "Mid", "skills": ["Python", "AWS"], "frameworks_tools": ["Docker"], "is_english": false, "finnish_language_required": true}"""
+Input: "We need a Python developer with AWS and Docker experience."
+Output: {"standardized_role": "Software Developer", "seniority": "Mid", "skills": ["Python", "AWS"], "frameworks_tools": ["Docker"], "is_english": true, "finnish_language_required": false}"""
         
         user_message = f"""Extract from this job posting:
 
@@ -133,12 +133,44 @@ Return ONLY this JSON (list all mentioned skills and tools; seniority must be EX
         return None
 
 
-def parse_llm_output(raw_output: str) -> Optional[StructuredInsight]:
+def detect_explicit_finnish_requirement(html: str) -> bool:
+    """
+    Detect if job posting EXPLICITLY requires Finnish language.
+    Look for specific patterns like "suomen kielen taito" or "suomea vaaditaan".
+    
+    Args:
+        html: Raw job posting HTML
+    
+    Returns:
+        True if explicit Finnish language requirement found, False otherwise
+    """
+    # Explicit Finnish language requirement patterns
+    explicit_patterns = [
+        r'suomen\s+kiel', # "suomen kielen" (Finnish language)
+        r'suomea\s+(vaaditaan|required|osattava|hallittava)', # "suomea vaaditaan" (Finnish required)
+        r'suomen\s+kielen\s+(taito|osaaminen|vaatimus)', # "suomen kielen taito/osaaminen" (Finnish language skill/requirement)
+        r'fluent.*suomi', # "fluent in Finnish"
+        r'suomi.*fluent',
+    ]
+    
+    html_lower = html.lower()
+    
+    for pattern in explicit_patterns:
+        if re.search(pattern, html_lower):
+            return True
+    
+    # If LLM said True but no explicit pattern found, override to False
+    return False
+
+
+def parse_llm_output(raw_output: str, original_html: str = None) -> Optional[StructuredInsight]:
     """
     Parse and validate LLM JSON output using Pydantic.
+    Apply post-processing to fix Finnish language detection.
     
     Args:
         raw_output: JSON string from LLM
+        original_html: Original job posting HTML for verification
     
     Returns:
         StructuredInsight object or None if validation fails
@@ -151,6 +183,15 @@ def parse_llm_output(raw_output: str) -> Optional[StructuredInsight]:
         
         json_str = json_match.group(0)
         data = json.loads(json_str)
+        
+        # CRITICAL FIX: Override LLM's Finnish detection with explicit keyword matching
+        # The LLM was picking up website UI text (e.g., "Julkaistu" = "Published")
+        # instead of actual job requirements
+        if original_html and data.get('finnish_language_required'):
+            actual_requirement = detect_explicit_finnish_requirement(original_html)
+            data['finnish_language_required'] = actual_requirement
+            if not actual_requirement:
+                logger.debug(f"Overriding LLM's Finnish requirement detection to FALSE (no explicit pattern found)")
         
         # Validate with Pydantic
         insight = StructuredInsight(**data)
@@ -249,8 +290,8 @@ def extraction_pipeline(batch_size: int = None) -> None:
                 processed += 1
                 continue
             
-            # Parse and validate
-            insight = parse_llm_output(llm_output)
+            # Parse and validate (pass original HTML for Finnish detection verification)
+            insight = parse_llm_output(llm_output, original_html=record["raw_html"])
             
             if not insight:
                 insert_failed_extraction(
