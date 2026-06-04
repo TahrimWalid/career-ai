@@ -26,6 +26,7 @@ def init_database() -> None:
     """
     Initialize the SQLite database with required tables if they don't exist.
     Creates: raw_postings, structured_insights, failed_extractions
+    Applies migrations for new columns if they don't exist.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -41,11 +42,12 @@ def init_database() -> None:
                 location TEXT,
                 posted_date TEXT,
                 raw_html TEXT,
+                content_hash TEXT,
                 scraped_at TIMESTAMP,
                 extraction_status TEXT DEFAULT 'pending' CHECK(extraction_status IN ('pending', 'done', 'failed'))
             )
         """)
-        
+
         # Table 2: structured_insights
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS structured_insights (
@@ -55,6 +57,9 @@ def init_database() -> None:
                 skills TEXT,
                 frameworks_tools TEXT,
                 is_english BOOLEAN,
+                finnish_language_required BOOLEAN,
+                years_experience_required TEXT,
+                remote_work_available TEXT,
                 extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (id) REFERENCES raw_postings(id) ON DELETE CASCADE
             )
@@ -70,6 +75,24 @@ def init_database() -> None:
                 FOREIGN KEY (id) REFERENCES raw_postings(id) ON DELETE CASCADE
             )
         """)
+        
+        # MIGRATIONS: add new columns to existing installs
+        cursor.execute("PRAGMA table_info(raw_postings)")
+        rp_cols = {col[1] for col in cursor.fetchall()}
+        if 'content_hash' not in rp_cols:
+            cursor.execute("ALTER TABLE raw_postings ADD COLUMN content_hash TEXT")
+            logger.info("Migration: added content_hash to raw_postings")
+
+        cursor.execute("PRAGMA table_info(structured_insights)")
+        si_cols = {col[1] for col in cursor.fetchall()}
+        for col, typedef in [
+            ('finnish_language_required', 'BOOLEAN DEFAULT NULL'),
+            ('years_experience_required', 'TEXT DEFAULT NULL'),
+            ('remote_work_available',     'TEXT DEFAULT NULL'),
+        ]:
+            if col not in si_cols:
+                cursor.execute(f"ALTER TABLE structured_insights ADD COLUMN {col} {typedef}")
+                logger.info(f"Migration: added {col} to structured_insights")
         
         conn.commit()
         logger.info("Database initialized successfully")
@@ -169,7 +192,7 @@ def get_pending_extractions(limit: int = 50) -> list[dict]:
     
     try:
         cursor.execute("""
-            SELECT id, url, title, company, location, raw_html
+            SELECT id, url, title, company, location, raw_html, content_hash
             FROM raw_postings
             WHERE extraction_status = 'pending'
             LIMIT ?
@@ -191,31 +214,23 @@ def insert_structured_insight(
     seniority: str,
     skills: str,
     frameworks_tools: str,
-    is_english: bool
+    is_english: bool = None,
+    finnish_language_required: bool = None,
+    years_experience_required: str = None,
+    remote_work_available: str = None,
 ) -> bool:
-    """
-    Insert a structured insight into the database.
-    
-    Args:
-        id: Job posting ID
-        standardized_role: Standardized job role title
-        seniority: Seniority level (Junior, Mid, Senior, Lead, Unknown)
-        skills: JSON-serialized list of skills
-        frameworks_tools: JSON-serialized list of frameworks/tools
-        is_english: Boolean indicating if job posting is in English
-    
-    Returns:
-        True if successful, False otherwise
-    """
+    """Insert a structured insight, updating extraction_status to 'done'."""
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     try:
         cursor.execute("""
-            INSERT INTO structured_insights
-            (id, standardized_role, seniority, skills, frameworks_tools, is_english, extracted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (id, standardized_role, seniority, skills, frameworks_tools, is_english, datetime.now()))
+            INSERT OR REPLACE INTO structured_insights
+            (id, standardized_role, seniority, skills, frameworks_tools, is_english,
+             finnish_language_required, years_experience_required, remote_work_available, extracted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (id, standardized_role, seniority, skills, frameworks_tools, is_english,
+              finnish_language_required, years_experience_required, remote_work_available, datetime.now()))
         
         # Update extraction status in raw_postings
         cursor.execute("""
@@ -257,7 +272,7 @@ def insert_failed_extraction(
     
     try:
         cursor.execute("""
-            INSERT INTO failed_extractions
+            INSERT OR REPLACE INTO failed_extractions
             (id, raw_output, error_message, failed_at)
             VALUES (?, ?, ?, ?)
         """, (id, raw_output, error_message, datetime.now()))

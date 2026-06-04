@@ -1,3 +1,9 @@
+FINAL_REPORT_20260529.txt
+README_PORTFOLIO.md
+diagnostic.py
+report_corrected.html
+test_fix.py
+
 # Python environment & caching
 .venv/
 __pycache__/
@@ -18,6 +24,13 @@ pipeline.log
 .DS_Store
 .idea/
 .vscode/
+
+# Documentation (all markdown except README)
+PORTFOLIO_SUMMARY.md
+QUICK_START.md
+SESSION_COMPLETION.md
+INTERVIEW_STRATEGY.md
+FIXES_APPLIED.md
 
 # Data & Output
 data/
