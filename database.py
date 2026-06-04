@@ -163,7 +163,7 @@ def insert_raw_posting(
         """, (id, url, title, company, location, posted_date, raw_html, datetime.now(), extraction_status))
         
         conn.commit()
-        logger.info(f"Inserted raw posting: {id} - {title}")
+        logger.debug(f"Inserted raw posting: {id} - {title}")
         return True
         
     except sqlite3.IntegrityError as e:
@@ -240,7 +240,7 @@ def insert_structured_insight(
         """, (id,))
         
         conn.commit()
-        logger.info(f"Inserted structured insight for: {id}")
+        logger.debug(f"Inserted structured insight for: {id}")
         return True
         
     except sqlite3.Error as e:

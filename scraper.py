@@ -306,16 +306,17 @@ def step1_index_scraping(max_pages: int = 50) -> int:
                     consecutive_empty_pages = 0
                     logger.info(f"Found {len(job_urls)} job links on page {page}")
 
+                    shells_before = total_new_shells
                     for job_url in job_urls:
                         if not url_exists(job_url):
                             job_id = hashlib.md5(job_url.encode()).hexdigest()
                             if insert_raw_posting(
                                 id=job_id,
                                 url=job_url,
-                                title="Pending",
-                                company="Pending",
-                                location="Pending",
-                                posted_date="Pending",
+                                title=None,
+                                company=None,
+                                location=None,
+                                posted_date=None,
                                 raw_html="",
                                 extraction_status="pending"
                             ):
@@ -323,6 +324,9 @@ def step1_index_scraping(max_pages: int = 50) -> int:
                         else:
                             logger.debug(f"URL already exists, skipping: {job_url}")
 
+                    page_new = total_new_shells - shells_before
+                    page_known = len(job_urls) - page_new
+                    logger.info(f"Page {page}: {page_new} new shells, {page_known} already known | running total: {total_new_shells}")
                     page += 1
                     break
 

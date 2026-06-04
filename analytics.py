@@ -30,12 +30,14 @@ def top_skills(limit: int = 10) -> None:
         print_header("TOP 10 MOST IN-DEMAND SKILLS")
         
         query = f"""
-        SELECT 
+        SELECT
             value as skill,
             COUNT(*) as demand_count,
             ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM structured_insights WHERE skills IS NOT NULL), 2) as percentage
         FROM structured_insights, json_each(structured_insights.skills)
         WHERE skills IS NOT NULL AND skills != '[]'
+          AND value NOT IN ('Finnish', 'English', 'Swedish', 'Norwegian', 'Danish',
+                            'German', 'French', 'Spanish', 'Russian')
         GROUP BY value
         ORDER BY demand_count DESC
         LIMIT ?

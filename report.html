@@ -141,16 +141,16 @@
             <div class="metrics">
                 <div class="metric">
                     <div class="metric-label">Total Jobs Analyzed</div>
-                    <div class="metric-value">2,006</div>
+                    <div class="metric-value">1,998</div>
                 </div>
                 <div class="metric">
                     <div class="metric-label">Successfully Extracted</div>
-                    <div class="metric-value">0</div>
-                    <div class="metric-label">(0.0%)</div>
+                    <div class="metric-value">1,998</div>
+                    <div class="metric-label">(100.0%)</div>
                 </div>
                 <div class="metric">
                     <div class="metric-label">Job Postings in English</div>
-                    <div class="metric-value">0.0%</div>
+                    <div class="metric-value">96.0%</div>
                 </div>
                 <div class="metric">
                     <div class="metric-label">Unique Locations</div>
@@ -205,7 +205,7 @@
         
         <div class="footer">
             <div class="footer-text">
-                <strong>Generated:</strong> 2026-06-04 01:53:02
+                <strong>Generated:</strong> 2026-06-04 17:12:24
             </div>
             <div class="data-source">
                 Data sourced from Duunitori.fi | Analysis Pipeline | MIT License
@@ -227,10 +227,10 @@
         new Chart(document.getElementById('skillsChart'), {
             type: 'bar',
             data: {
-                labels: [],
+                labels: ["AWS", "Python", "Finnish", "English", "SQL", "JavaScript", "Linux", "TypeScript", "React", "Project Management", "Java", "Node.js", "Kotlin", "Azure", "SAP"],
                 datasets: [{
                     label: 'Number of Jobs',
-                    data: [],
+                    data: [1630, 1550, 48, 34, 26, 20, 14, 10, 10, 10, 10, 8, 8, 8, 6],
                     backgroundColor: chartColors.primary,
                     borderColor: chartColors.secondary,
                     borderWidth: 1
@@ -259,10 +259,10 @@
         new Chart(document.getElementById('frameworksChart'), {
             type: 'bar',
             data: {
-                labels: [],
+                labels: ["Docker", "React", "Kubernetes", "AWS", "Kotlin", "Xcode", "Vue.js", "TypeScript", "Terraform", "Node.js", "Laravel", "Databricks", "Azure", "Android Studio", "ZIO"],
                 datasets: [{
                     label: 'Number of Jobs',
-                    data: [],
+                    data: [1638, 20, 18, 16, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 2],
                     backgroundColor: chartColors.secondary,
                     borderColor: chartColors.primary,
                     borderWidth: 1
@@ -291,9 +291,9 @@
         new Chart(document.getElementById('seniorityChart'), {
             type: 'doughnut',
             data: {
-                labels: [],
+                labels: ["Mid", "Senior", "Unknown", "Lead", "Junior"],
                 datasets: [{
-                    data: [],
+                    data: [1778, 84, 78, 48, 10],
                     backgroundColor: [
                         chartColors.primary,
                         chartColors.secondary,
@@ -321,10 +321,10 @@
         new Chart(document.getElementById('locationsChart'), {
             type: 'bar',
             data: {
-                labels: [],
+                labels: ["Espoo", "Helsinki", "Tampere", "Vantaa", "Turku", "Vaasa", "Oulu", "Jyv\u00e4skyl\u00e4", "Lahti", "Sein\u00e4joki"],
                 datasets: [{
                     label: 'Number of Jobs',
-                    data: [],
+                    data: [794, 728, 68, 42, 38, 26, 26, 24, 18, 14],
                     backgroundColor: chartColors.accent,
                     borderColor: chartColors.secondary,
                     borderWidth: 1
@@ -352,10 +352,10 @@
         new Chart(document.getElementById('experienceChart'), {
             type: 'bar',
             data: {
-                labels: [],
+                labels: ["0-2", "2-5", "5-10", "Not specified"],
                 datasets: [{
                     label: 'Number of Jobs',
-                    data: [],
+                    data: [2, 1784, 52, 160],
                     backgroundColor: chartColors.success,
                     borderColor: chartColors.primary,
                     borderWidth: 1
@@ -376,9 +376,9 @@
         new Chart(document.getElementById('remoteChart'), {
             type: 'doughnut',
             data: {
-                labels: [],
+                labels: ["Hybrid", "Not specified", "On-site", "Remote"],
                 datasets: [{
-                    data: [],
+                    data: [1962, 14, 12, 10],
                     backgroundColor: [
                         chartColors.success,
                         chartColors.warning,

@@ -67,21 +67,9 @@ def run_scraper(start_time: float) -> float:
 
 def run_extractor(start_time: float) -> float:
     """Execute the LLM extraction phase and return phase duration."""
-    import shutil
-    from pathlib import Path
-    from datetime import datetime as dt
-    
     logger.info("=" * 70)
     logger.info("PHASE 2: LLM EXTRACTION")
     logger.info("=" * 70)
-    
-    # Create backup BEFORE extraction to prevent data loss
-    db_file = Path("duunitori_pipeline.db")
-    if db_file.exists():
-        backup_file = Path(f"duunitori_pipeline_backup_{dt.now().strftime('%Y%m%d_%H%M%S')}.db")
-        shutil.copy(str(db_file), str(backup_file))
-        logger.info(f"✓ Created pre-extraction backup: {backup_file}")
-    
     phase_start = time.time()
     try:
         extraction_pipeline()
@@ -167,6 +155,11 @@ Examples:
         action="store_true",
         help="Wipe structured_insights and reset all records to 'pending' for re-extraction (use after schema changes)"
     )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Reset failed extractions to 'pending' and re-run extraction on those records only"
+    )
 
     args = parser.parse_args()
 
@@ -187,7 +180,7 @@ Examples:
         return
 
     # Determine which phases to run
-    run_all_phases = not any([args.scrape, args.extract, args.analytics]) or args.all
+    run_all_phases = not any([args.scrape, args.extract, args.analytics, args.retry_failed]) or args.all
     
     # AUTO-BACKUP: Create backup BEFORE any pipeline operations
     db_file = Path("duunitori_pipeline.db")
@@ -203,7 +196,29 @@ Examples:
     try:
         # Always initialize database
         validate_and_initialize()
-        
+
+        if args.retry_failed:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM failed_extractions")
+            count = cursor.fetchone()[0]
+            if count == 0:
+                print("\n✓ No failed extractions to retry.\n")
+                conn.close()
+                return
+            cursor.execute("UPDATE raw_postings SET extraction_status = 'pending' WHERE extraction_status = 'failed'")
+            cursor.execute("DELETE FROM failed_extractions")
+            conn.commit()
+            conn.close()
+            logger.info(f"Reset {count} failed records to pending. Running extraction...")
+            print(f"\n↺ Retrying {count} failed extraction(s)...\n")
+            phase_timings['extractor'] = run_extractor(pipeline_start)
+            total_duration = time.time() - pipeline_start
+            logger.info(f"⏱️  Total duration: {format_duration(total_duration)}")
+            logger.info(f"Pipeline completed at {datetime.now()}")
+            print(f"\n✓ Retry complete — check logs for results.\n")
+            return
+
         if args.scrape or run_all_phases:
             phase_timings['scraper'] = run_scraper(pipeline_start)
             # Generate summary after scraping

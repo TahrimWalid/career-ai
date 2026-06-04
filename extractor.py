@@ -46,6 +46,33 @@ ROLE_TAXONOMY = [
     "Other",
 ]
 
+# Short descriptions injected into the prompt to steer role assignment
+_ROLE_HINTS = {
+    "Software Developer":               "general dev role when no clear specialisation",
+    "Frontend Developer":               "HTML/CSS/JS, React, Vue, Angular focus",
+    "Backend Developer":                "APIs, server-side, database focus",
+    "Full Stack Developer":             "both frontend and backend",
+    "Mobile Developer":                 "iOS, Android, React Native, Flutter",
+    "Data Engineer":                    "ETL pipelines, Spark, Kafka, data warehouses",
+    "Data Scientist / ML Engineer":     "ML models, AI research, model training",
+    "DevOps / Cloud Engineer":          "CI/CD, containers, cloud infra, platform ops",
+    "QA / Test Engineer":               "testing, test automation, quality assurance",
+    "Security Engineer":                "cybersecurity, pen testing, SOC, compliance",
+    "Network / Systems Engineer":       "networking, sysadmin, infrastructure",
+    "IT Consultant / Business Analyst": "consulting, BA, ERP, SAP, requirements",
+    "Solution Architect":               "architecture design, system design",
+    "IT Support / Helpdesk":            "support, helpdesk, troubleshooting end users",
+    "Other":                            "non-development IT role",
+}
+
+# LLM sometimes outputs wrong field names for frameworks_tools — remap before Pydantic
+_FIELD_ALIASES = {
+    'tools_frameworks': 'frameworks_tools',
+    'tools':            'frameworks_tools',
+    'framework_tools':  'frameworks_tools',
+    'frameworks':       'frameworks_tools',
+}
+
 # Common aliases the LLM might produce → canonical taxonomy entry
 _ROLE_ALIASES = {
     "software engineer":              "Software Developer",
@@ -150,18 +177,23 @@ def extract_with_ollama(job_description: str) -> Optional[str]:
         client = Client(host="http://localhost:11434")
         truncated = job_description[:2000]
 
-        role_list = "\n".join(f'  "{r}"' for r in ROLE_TAXONOMY)
+        role_list = "\n".join(f'  "{r}" — {_ROLE_HINTS[r]}' for r in ROLE_TAXONOMY)
 
         system_prompt = f"""Extract structured data from IT job postings. Return ONLY valid JSON.
 
 ROLE — choose the single best match from this exact list:
 {role_list}
 
-SENIORITY — "Junior" (0-2 yrs implied), "Mid" (2-5 yrs), "Senior" (5+ yrs), "Lead" (team lead/principal), "Unknown"
+SENIORITY — assign ONLY if clearly stated in the title or posting body:
+  "Junior": title/text says junior, entry-level, trainee, graduate, harjoittelija
+  "Senior": title/text says senior, experienced, expert (5+ yrs)
+  "Lead": title/text says lead, principal, head, manager, team lead
+  "Mid": title/text explicitly says mid-level or implies 2-5 yrs experience
+  "Unknown": seniority is NOT mentioned — use this as the default, NOT "Mid"
 EXPERIENCE — years explicitly stated in posting: "0-2", "2-5", "5-10", "10+", or "Not specified"
 REMOTE — work arrangement: "Remote", "Hybrid", "On-site", or "Not specified"
-SKILLS — languages, protocols, platforms (Python, Java, SQL, AWS, Azure, Linux)
-TOOLS — frameworks, libraries, runtimes (Docker, React, Kubernetes, Node.js, Terraform)
+SKILLS — programming languages, protocols, cloud platforms (Python, Java, SQL, AWS, Azure, Linux). Do NOT include spoken/natural languages (Finnish, English, Swedish, etc.) — those are separate fields.
+FRAMEWORKS_TOOLS — field name must be exactly "frameworks_tools". Frameworks, libraries, runtimes, tools (Docker, React, Kubernetes, Node.js, Terraform).
 FINNISH — true ONLY if posting explicitly requires Finnish fluency (e.g. "suomen kielen taito", "Finnish required", "äidinkielenä suomi")"""
 
         user_message = f"""Extract from this job posting:
@@ -169,7 +201,7 @@ FINNISH — true ONLY if posting explicitly requires Finnish fluency (e.g. "suom
 {truncated}
 
 Return ONLY this JSON (no other text):
-{{"standardized_role": "Software Developer", "seniority": "Mid", "skills": ["Python", "AWS"], "frameworks_tools": ["Docker"], "is_english": true, "finnish_language_required": false, "years_experience_required": "2-5", "remote_work_available": "Hybrid"}}"""
+{{"standardized_role": "Software Developer", "seniority": "Unknown", "skills": ["Python", "AWS"], "frameworks_tools": ["Docker"], "is_english": true, "finnish_language_required": false, "years_experience_required": "2-5", "remote_work_available": "Hybrid"}}"""
 
         response = client.generate(
             model="qwen2.5:3b",
@@ -194,6 +226,10 @@ def parse_llm_output(raw_output: str) -> Optional[StructuredInsight]:
         if not json_match:
             raise ValueError("No JSON object found in response")
         data = json.loads(json_match.group(0))
+        # Remap known field name variants the LLM produces instead of "frameworks_tools"
+        for wrong, right in _FIELD_ALIASES.items():
+            if wrong in data and right not in data:
+                data[right] = data.pop(wrong)
         return StructuredInsight(**data)
     except json.JSONDecodeError as e:
         logger.warning(f"JSON parse error: {e}")
@@ -228,6 +264,27 @@ def _copy_existing_extraction(job_id: str, source_id: str) -> bool:
         return False
     finally:
         conn.close()
+
+
+_JUNIOR_TITLE_KW = {'junior', 'jr.', ' jr ', 'entry-level', 'entry level', 'trainee', 'harjoittelija', 'graduate', 'intern', 'kesätyö'}
+_SENIOR_TITLE_KW = {'senior', ' sr ', 'sr.', 'experienced', 'expert', 'vanhempi', 'pääsuunnittelija'}
+_LEAD_TITLE_KW   = {' lead', 'lead ', 'tech lead', 'team lead', 'principal', 'head of', 'engineering manager', 'johtava', 'päällikkö'}
+
+
+def _apply_seniority_heuristics(title: str, seniority: str) -> str:
+    """Override Mid/Unknown seniority when the job title carries an explicit signal."""
+    if seniority in ('Junior', 'Senior', 'Lead'):
+        return seniority
+    if not title or title in ('Unknown',):
+        return seniority
+    tl = title.lower()
+    if any(kw in tl for kw in _LEAD_TITLE_KW):
+        return 'Lead'
+    if any(kw in tl for kw in _SENIOR_TITLE_KW):
+        return 'Senior'
+    if any(kw in tl for kw in _JUNIOR_TITLE_KW):
+        return 'Junior'
+    return seniority
 
 
 def extraction_pipeline(batch_size: int = None) -> None:
@@ -323,10 +380,12 @@ def extraction_pipeline(batch_size: int = None) -> None:
                 processed += 1
                 continue
 
+            seniority = _apply_seniority_heuristics(record.get("title") or "", insight.seniority)
+
             success = insert_structured_insight(
                 id=job_id,
                 standardized_role=insight.standardized_role,
-                seniority=insight.seniority,
+                seniority=seniority,
                 skills=json.dumps(insight.skills),
                 frameworks_tools=json.dumps(insight.frameworks_tools),
                 is_english=insight.is_english,

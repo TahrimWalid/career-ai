@@ -1,47 +1,37 @@
 """
 Central logging utility for the Duunitori pipeline.
-Streams logs simultaneously to stdout and pipeline.log.
+Dual output:
+  stdout   → INFO+  (clean summaries; captured by nohup as nohup.out)
+  output.log → DEBUG+ (raw verbose log for post-run inspection)
 """
 import logging
 import sys
 from pathlib import Path
 
 def get_logger(name: str = "duunitori_pipeline") -> logging.Logger:
-    """
-    Initialize and return a configured logger with dual handlers (stdout + file).
-    
-    Args:
-        name: Logger name, defaults to "duunitori_pipeline"
-    
-    Returns:
-        Configured logger instance
-    """
     logger = logging.getLogger(name)
-    
-    # Avoid duplicate handlers if logger is already configured
+
     if logger.hasHandlers():
         return logger
-    
+
     logger.setLevel(logging.DEBUG)
-    
-    # Formatting string with exact timestamps as per specification
+
     formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
     )
-    
-    # Stdout handler
+
+    # Stdout: INFO and above — clean summarised output (→ nohup.out)
     stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setLevel(logging.DEBUG)
+    stdout_handler.setLevel(logging.INFO)
     stdout_handler.setFormatter(formatter)
     logger.addHandler(stdout_handler)
-    
-    # File handler
-    log_file = Path("pipeline.log")
-    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+
+    # output.log: DEBUG and above — full raw log
+    file_handler = logging.FileHandler(Path("output.log"), mode="a", encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-    
+
     return logger
 
 
